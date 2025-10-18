@@ -145,7 +145,7 @@ router.get('/transactions', auth, async (req, res) => {
   }
 });
 
-// --- Fetch Accounts and Balances ---
+// --- Fetch Accounts and Balances and ---
 router.get('/accounts', auth, async (req, res) => {
   try {
     const account = await Account.findOne({ userId: req.user.id }).lean();
