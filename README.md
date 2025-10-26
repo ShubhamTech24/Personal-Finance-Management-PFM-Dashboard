@@ -88,4 +88,6 @@ Mobile-first, adaptive UI that works seamlessly across all devices.
 
 🧾 Fully type-safe codebase (TypeScript across frontend and backend)
 
-📷 Screenshots (Optional)
+📷 Screenshots 
+<img width="1919" height="883" alt="Screenshot 2025-10-24 205204" src="https://github.com/user-attachments/assets/7880e7b5-412c-4223-b805-aebb79fe45ab" />
+
