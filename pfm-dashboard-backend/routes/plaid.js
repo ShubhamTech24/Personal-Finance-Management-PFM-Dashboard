@@ -1,20 +1,14 @@
-const express = require('express');
-const router = express.Router();
-const auth = require('../middleware/auth');
-const Account = require('../models/Account');
-const { Configuration, PlaidApi, Products, CountryCode, PlaidEnvironments } = require('plaid');
+import express from 'express';
+import authMiddleware from '../middleware/auth';
+import Account from '../models/Account';
+import { Configuration, PlaidApi, Products, CountryCode, PlaidEnvironments } from 'plaid';
 
-// --- Read & sanitize envs ---
+const router = express.Router();
+
 const PLAID_ENV = (process.env.PLAID_ENV || 'sandbox').trim().toLowerCase();
 const PLAID_CLIENT_ID = (process.env.PLAID_CLIENT_ID || '').trim();
 const PLAID_SECRET = (process.env.PLAID_SECRET || '').trim();
 
-// --- Debug: Verify environment variables ---
-console.log('🔍 PLAID_CLIENT_ID:', PLAID_CLIENT_ID);
-console.log('🔍 PLAID_SECRET:', PLAID_SECRET);
-console.log('🔍 PLAID_ENV:', PLAID_ENV);
-
-// --- Plaid environment selection ---
 const basePath =
   PLAID_ENV === 'sandbox'
     ? PlaidEnvironments.sandbox
@@ -22,15 +16,6 @@ const basePath =
     ? PlaidEnvironments.development
     : PlaidEnvironments.production;
 
-console.log('🔗 Using Plaid Environment BasePath:', basePath ? basePath.basePath : 'undefined');
-
-
-
-if (!PLAID_CLIENT_ID || !PLAID_SECRET) {
-  console.error('❌ PLAID_CLIENT_ID / PLAID_SECRET missing. Check .env and restart.');
-}
-
-// --- Plaid Client Configuration ---
 const configuration = new Configuration({
   basePath,
   baseOptions: {
@@ -44,24 +29,14 @@ const configuration = new Configuration({
 
 const client = new PlaidApi(configuration);
 
-// --- Health route to verify environment on server ---
-router.get('/health', (req, res) => {
-  res.json({
-    env: PLAID_ENV,
-    clientId: mask(PLAID_CLIENT_ID),
-    secret: mask(PLAID_SECRET)
-  });
-});
-
-// --- Create Link Token ---
-router.post('/create_link_token', auth, async (req, res) => {
+router.post('/create_link_token', authMiddleware, async (req, res) => {
   try {
     if (!PLAID_CLIENT_ID || !PLAID_SECRET) {
-      return res.status(500).json({ message: 'Plaid keys not loaded. Fix .env and restart server.' });
+      return res.status(500).json({ message: 'Plaid keys not configured. Please set PLAID_CLIENT_ID and PLAID_SECRET.' });
     }
 
     const response = await client.linkTokenCreate({
-      user: { client_user_id: String(req.user.id) },
+      user: { client_user_id: String(req.user!.id) },
       client_name: 'PFM Dashboard',
       products: [Products.Transactions],
       country_codes: [CountryCode.Us],
@@ -69,7 +44,7 @@ router.post('/create_link_token', auth, async (req, res) => {
     });
 
     res.json({ link_token: response.data.link_token });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Plaid linkTokenCreate error:', error.response?.data || error.message);
     res.status(500).json({
       message: 'Error creating link token',
@@ -78,8 +53,7 @@ router.post('/create_link_token', auth, async (req, res) => {
   }
 });
 
-// --- Exchange public_token and store access_token ---
-router.post('/set_access_token', auth, async (req, res) => {
+router.post('/set_access_token', authMiddleware, async (req, res) => {
   const { public_token } = req.body;
   if (!public_token) {
     return res.status(400).json({ message: 'public_token is required' });
@@ -92,12 +66,12 @@ router.post('/set_access_token', auth, async (req, res) => {
 
     await Account.findOneAndUpdate(
       { item_id },
-      { userId: req.user.id, item_id, access_token },
+      { userId: req.user!.id, item_id, access_token },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
     res.json({ success: true, item_id });
-  } catch (error) {
+  } catch (error: any) {
     console.error('itemPublicTokenExchange error:', error.response?.data || error.message);
     res.status(500).json({
       message: 'Failed to exchange public token',
@@ -106,16 +80,17 @@ router.post('/set_access_token', auth, async (req, res) => {
   }
 });
 
-// --- Fetch last 30 days transactions ---
-router.get('/transactions', auth, async (req, res) => {
+router.get('/transactions', authMiddleware, async (req, res) => {
   try {
-    const account = await Account.findOne({ userId: req.user.id }).lean();
-    if (!account) return res.status(404).json({ message: 'No linked account found' });
+    const account = await Account.findOne({ userId: req.user!.id }).lean();
+    if (!account) {
+      return res.status(404).json({ message: 'No linked account found' });
+    }
 
     const end = new Date();
     const start = new Date();
     start.setDate(end.getDate() - 30);
-    const fmt = (d) => d.toISOString().slice(0, 10);
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
     const result = await client.transactionsGet({
       access_token: account.access_token,
@@ -130,7 +105,7 @@ router.get('/transactions', auth, async (req, res) => {
       accounts: result.data.accounts,
       item: result.data.item
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('transactionsGet error:', error.response?.data || error.message);
     res.status(500).json({
       message: 'Error fetching transactions',
@@ -139,15 +114,16 @@ router.get('/transactions', auth, async (req, res) => {
   }
 });
 
-// --- Fetch Accounts and Balances ---
-router.get('/accounts', auth, async (req, res) => {
+router.get('/accounts', authMiddleware, async (req, res) => {
   try {
-    const account = await Account.findOne({ userId: req.user.id }).lean();
-    if (!account) return res.status(404).json({ message: 'No linked account found' });
+    const account = await Account.findOne({ userId: req.user!.id }).lean();
+    if (!account) {
+      return res.status(404).json({ message: 'No linked account found' });
+    }
 
     const balances = await client.accountsBalanceGet({ access_token: account.access_token });
     res.json({ accounts: balances.data.accounts });
-  } catch (error) {
+  } catch (error: any) {
     console.error('accountsBalanceGet error:', error.response?.data || error.message);
     res.status(500).json({
       message: 'Error fetching accounts',
@@ -156,4 +132,4 @@ router.get('/accounts', auth, async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;
